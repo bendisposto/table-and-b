@@ -16,11 +16,28 @@ MACHINE {{machine}}
  CONSTANTS {{table-name}}
 
  PROPERTIES
-  {{table-name}} : POW(TUPLETYPE) & 
-  {{table-name}} = { 
-   {{{tuples}}} 
+  {{table-name}} : POW(TUPLETYPE) &
+  {{table-name}} = {
+   {{{tuples}}}
   } &
   {{{accessor-functions}}}
+END
+" (assoc data :machine name :table-name table-name)))
+
+(defn record-encoding [name table-name data]
+  (sc/render-string
+   "
+MACHINE {{machine}}
+ DEFINITIONS STRUCTTYPE == ({{struct-type}})
+ ABSTRACT_CONSTANTS {{accessor-names}}
+ CONSTANTS {{table-name}}
+
+ PROPERTIES
+  {{table-name}} : POW(STRUCTTYPE) &
+  {{table-name}} = {
+   {{{records}}}
+  } &
+  {{{struct-functions}}}
 END
 " (assoc data :machine name :table-name table-name)))
 
@@ -58,11 +75,20 @@ END
   (let [elements (map (comp pr-str :value) row)]
     (str "(" (st/join "," elements) ")")))
 
+(defn make-record [header row]
+  (let [elements (map (comp pr-str :value) row)]
+    (str "rec(" (st/join "," (map (fn [n v] (str n ":" v)) header elements)) ")")))
+
 (defn make-accessor [n id name]
   (let [vars (st/join "," (for [x (range n)] (str "v" x)))]
     (sc/render-string
      "{{name}} = %({{vars}}).(({{vars}}):TUPLETYPE|v{{id}})"
      {:name name :vars vars :id id})))
+
+(defn make-struct [name]
+  (sc/render-string
+   "{{name}} = %r.(r:STRUCTTYPE|r'{{name}})"
+   {:name name }))
 
 (defn parse-excel [filename sheetname]
   (let [workbook (dj/load-workbook filename)
@@ -80,9 +106,15 @@ END
      :types types
      :accessor-names (st/join "," header)
      :accessor-functions (st/join " &\n  " (map-indexed (partial make-accessor (count header)) header))
+     :struct-functions (st/join " &\n  " (map make-struct header))
      :tuple-type (st/join "*" types)
-     :tuples (st/join ",\n   " (map make-tuple table))}))
+     :struct-type (str "struct(" (st/join "," (map (fn [n t] (str n ":" t)) header types)) ")")
+     :tuples (st/join ",\n   " (map make-tuple table))
+     :records (st/join ",\n   " (map (partial make-record header) table))}))
 
-(defn -main
-  [xls-file sheet table-name]
-  (println (tuple-encoding (apply str (filter ascii sheet)) table-name (parse-excel xls-file sheet))))
+(defn -main [& args]
+  (let [[mode xls-file sheet table-name machine-name] args
+        data (parse-excel xls-file sheet)
+        output (cond (= mode "tuple") (tuple-encoding machine-name table-name data)
+                     (= mode "record") (record-encoding machine-name table-name data))]
+    (println output)))
